@@ -164,9 +164,8 @@ class VideoDownloaderApp:
         self.setup_ui()
         self.setup_dragdrop()
         
-        # Автообновление yt-dlp (отложенный запуск после полной инициализации)
-        if self.config.get('auto_update', True):
-            self.root.after(1000, self.auto_update_ytdlp)
+        # Автообновление ОТКЛЮЧЕНО для совместимости с PyInstaller
+        # Используйте кнопку "Обновить yt-dlp" для обновления
     
     def setup_ui(self):
         """Настройка интерфейса"""
@@ -375,11 +374,11 @@ class VideoDownloaderApp:
         
         ttk.Label(frame, text="Настройки приложения", font=("Arial", 14, "bold")).pack(pady=10)
         
-        # Автообновление
-        auto_update_var = tk.BooleanVar(value=self.config.get('auto_update', True))
-        ttk.Checkbutton(frame, text="Автообновление yt-dlp при запуске", 
-                       variable=auto_update_var,
-                       command=lambda: self.config.set('auto_update', auto_update_var.get())).pack(anchor=tk.W, pady=5)
+        # Информация об обновлении
+        info_frame = ttk.Frame(frame)
+        info_frame.pack(fill=tk.X, pady=10)
+        ttk.Label(info_frame, text="ℹ️ Для обновления yt-dlp используйте кнопку 'Обновить yt-dlp' на главной вкладке",
+                 wraplength=400, foreground="blue").pack(anchor=tk.W, padx=10)
         
         # Тема (placeholder для будущей реализации)
         ttk.Label(frame, text="Тема интерфейса:", font=("Arial", 10, "bold")).pack(anchor=tk.W, pady=(20,5))
