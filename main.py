@@ -22,6 +22,9 @@ import urllib.request
 from PIL import Image, ImageTk
 import io
 from themes import apply_theme
+import csv
+from plyer import notification  # Для уведомлений
+import shutil
 
 
 class DownloadHistory:
@@ -87,6 +90,7 @@ class Config:
             'download_subtitles': False,
             'subtitle_language': 'en',
             'auto_update': True,
+            'auto_organize': False,  # Автоматическая организация файлов
             'presets': {
                 '4K Video': {'quality': '2160', 'subtitles': False},
                 'HD Video': {'quality': '1080', 'subtitles': False},
@@ -163,6 +167,7 @@ class VideoDownloaderApp:
         # UI
         self.setup_ui()
         self.setup_dragdrop()
+        self.setup_hotkeys()
         
         # Автообновление ОТКЛЮЧЕНО для совместимости с PyInstaller
         # Используйте кнопку "Обновить yt-dlp" для обновления
@@ -340,6 +345,8 @@ class VideoDownloaderApp:
         
         ttk.Button(btn_frame, text="Обновить", command=self.refresh_history).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Очистить историю", command=self.clear_history_confirm).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Экспорт в CSV", command=self.export_history_csv).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="📊 Статистика", command=self.show_statistics).pack(side=tk.LEFT, padx=5)
         
         # Таблица истории
         tree_frame = ttk.Frame(frame)
@@ -389,10 +396,18 @@ class VideoDownloaderApp:
         ttk.Label(frame, text="(Перезапустите приложение для применения темы)", 
                  foreground="gray").pack(anchor=tk.W, padx=20)
         
+        # Автоорганизация
+        auto_organize_var = tk.BooleanVar(value=self.config.get('auto_organize', False))
+        ttk.Checkbutton(frame, text="Автоматическая организация файлов по папкам (YouTube, TikTok и т.д.)", 
+                       variable=auto_organize_var).pack(anchor=tk.W, pady=(20,5))
+        
         # Сохранить настройки
         ttk.Button(frame, text="Сохранить настройки", 
-                  command=lambda: [self.config.set('theme', theme_var.get()), 
-                                  messagebox.showinfo("Успех", "Настройки сохранены!")]).pack(pady=20)
+                  command=lambda: [
+                      self.config.set('theme', theme_var.get()),
+                      self.config.set('auto_organize', auto_organize_var.get()),
+                      messagebox.showinfo("Успех", "Настройки сохранены!")
+                  ]).pack(pady=20)
     
     def setup_queue_tab(self, parent):
         """Вкладка очереди"""
@@ -409,6 +424,7 @@ class VideoDownloaderApp:
                                             command=self.start_queue_processing)
         self.start_queue_button.pack(side=tk.LEFT, padx=5)
         
+        ttk.Button(btn_frame, text="Импорт из файла", command=self.import_urls_file).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Очистить очередь", command=self.clear_queue).pack(side=tk.LEFT, padx=5)
         
         # Список очереди
@@ -433,6 +449,39 @@ class VideoDownloaderApp:
         if data.startswith('http'):
             self.url.set(data)
             self.log("✓ URL добавлен через Drag & Drop")
+    
+    def setup_hotkeys(self):
+        """Настройка горячих клавиш"""
+        # Ctrl+V - вставить и скачать
+        self.root.bind('<Control-v>', lambda e: self.paste_and_download())
+        # Ctrl+D - скачать
+        self.root.bind('<Control-d>', lambda e: self.start_download())
+        # Ctrl+I - информация
+        self.root.bind('<Control-i>', lambda e: self.get_video_info())
+        # Ctrl+Q - добавить в очередь
+        self.root.bind('<Control-q>', lambda e: self.add_to_queue())
+        # Ctrl+U - обновить yt-dlp
+        self.root.bind('<Control-u>', lambda e: self.manual_update_ytdlp())
+        # Ctrl+H - открыть историю (переключить на вкладку истории)
+        # F5 - обновить историю
+        self.root.bind('<F5>', lambda e: self.refresh_history())
+        # Escape - очистить URL
+        self.root.bind('<Escape>', lambda e: self.url.set(""))
+        
+        self.log("✓ Горячие клавиши активированы")
+        self.log("  Ctrl+V: Вставить URL, Ctrl+D: Скачать, Ctrl+I: Инфо")
+        self.log("  Ctrl+Q: В очередь, Ctrl+U: Обновить yt-dlp, F5: Обновить")
+    
+    def paste_and_download(self):
+        """Вставить URL из буфера и начать загрузку"""
+        try:
+            clipboard = self.root.clipboard_get()
+            if clipboard.startswith('http'):
+                self.url.set(clipboard)
+                self.log("✓ URL вставлен из буфера обмена")
+                self.start_download()
+        except:
+            pass
     
     # ============= МЕТОДЫ ЗАГРУЗКИ =============
     
@@ -514,6 +563,11 @@ class VideoDownloaderApp:
             
             self.log("-" * 80)
             self.log("✓ Видео успешно загружено!")
+            
+            # Показываем уведомление
+            self.show_notification("Загрузка завершена!", 
+                                  f"Видео '{title}' успешно загружено")
+            
             messagebox.showinfo("Успех", "Видео успешно загружено!")
             
         except Exception as e:
@@ -573,6 +627,19 @@ class VideoDownloaderApp:
         self.log_text.config(state='normal')
         self.log_text.delete(1.0, tk.END)
         self.log_text.config(state='disabled')
+    
+    def show_notification(self, title, message):
+        """Показать системное уведомление"""
+        try:
+            notification.notify(
+                title=title,
+                message=message,
+                app_name="Video Downloader",
+                timeout=5  # Секунд
+            )
+        except:
+            # Если plyer не работает, пропускаем
+            pass
     
     def apply_preset(self, event=None):
         """Применить пресет настроек"""
@@ -794,6 +861,122 @@ class VideoDownloaderApp:
         
         thread = threading.Thread(target=update_thread, daemon=True)
         thread.start()
+    
+    # ============= ДОПОЛНИТЕЛЬНЫЕ ФУНКЦИИ =============
+    
+    def organize_downloads(self):
+        """Автоматическая организация загруженных файлов"""
+        try:
+            download_path = Path(self.download_path.get())
+            
+            # Создаём структуру папок
+            folders = {
+                'youtube': download_path / "YouTube",
+                'tiktok': download_path / "TikTok",
+                'instagram': download_path / "Instagram",
+                'pinterest': download_path / "Pinterest",
+                'other': download_path / "Other"
+            }
+            
+            for folder in folders.values():
+                folder.mkdir(exist_ok=True)
+            
+            self.log("✓ Папки для организации созданы")
+            return folders
+            
+        except Exception as e:
+            self.log(f"✗ Ошибка организации: {str(e)}")
+            return None
+    
+    def export_history_csv(self):
+        """Экспорт истории в CSV"""
+        try:
+            file = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            )
+            
+            if file:
+                history = self.history.get_history(1000)
+                
+                with open(file, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(['ID', 'URL', 'Title', 'Quality', 'Filename', 'Size', 'Date', 'Status'])
+                    writer.writerows(history)
+                
+                self.log(f"✓ История экспортирована в {file}")
+                messagebox.showinfo("Успех", f"История сохранена в {file}")
+                
+        except Exception as e:
+            self.log(f"✗ Ошибка экспорта: {str(e)}")
+            messagebox.showerror("Ошибка", f"Не удалось экспортировать:\n{str(e)}")
+    
+    def import_urls_file(self):
+        """Импорт списка URL из файла"""
+        try:
+            file = filedialog.askopenfilename(
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+            )
+            
+            if file:
+                with open(file, 'r', encoding='utf-8') as f:
+                    urls = [line.strip() for line in f if line.strip().startswith('http')]
+                
+                for url in urls:
+                    self.download_queue.put({
+                        'url': url,
+                        'quality': self.quality.get(),
+                        'subtitles': self.download_subtitles.get()
+                    })
+                    self.queue_listbox.insert(tk.END, url)
+                
+                self.log(f"✓ Импортировано {len(urls)} URL в очередь")
+                messagebox.showinfo("Успех", f"Добавлено {len(urls)} видео в очередь!")
+                
+        except Exception as e:
+            self.log(f"✗ Ошибка импорта: {str(e)}")
+            messagebox.showerror("Ошибка", f"Не удалось импортировать:\n{str(e)}")
+    
+    def show_statistics(self):
+        """Показать статистику загрузок"""
+        try:
+            history = self.history.get_history(10000)
+            
+            total_downloads = len(history)
+            total_size = sum(row[5] for row in history if len(row) > 5 and row[5])
+            total_size_gb = total_size / (1024**3)
+            
+            # Подсчёт по качеству
+            quality_stats = {}
+            for row in history:
+                quality = row[3] if len(row) > 3 else "unknown"
+                quality_stats[quality] = quality_stats.get(quality, 0) + 1
+            
+            stats_text = f"""
+📊 СТАТИСТИКА ЗАГРУЗОК
+
+Всего загружено: {total_downloads} видео
+Общий размер: {total_size_gb:.2f} GB
+
+По качеству:
+"""
+            for quality, count in sorted(quality_stats.items(), key=lambda x: x[1], reverse=True):
+                stats_text += f"  • {quality}: {count} видео\n"
+            
+            # Показываем в новом окне
+            stats_window = tk.Toplevel(self.root)
+            stats_window.title("Статистика загрузок")
+            stats_window.geometry("400x400")
+            
+            text_widget = scrolledtext.ScrolledText(stats_window, wrap=tk.WORD, font=("Courier", 10))
+            text_widget.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+            text_widget.insert(1.0, stats_text)
+            text_widget.config(state='disabled')
+            
+            ttk.Button(stats_window, text="Закрыть", command=stats_window.destroy).pack(pady=10)
+            
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось получить статистику:\n{str(e)}")
 
 
 def main():
