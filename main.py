@@ -25,6 +25,10 @@ from themes import apply_theme
 import csv
 from plyer import notification  # Для уведомлений
 import shutil
+from pystray import Icon, Menu, MenuItem
+from PIL import Image, ImageDraw
+import schedule
+import time
 
 
 class DownloadHistory:
@@ -146,6 +150,8 @@ class VideoDownloaderApp:
         self.config = Config()
         self.history = DownloadHistory()
         self.download_queue = Queue()
+        self.scheduled_tasks = []  # Запланированные задачи
+        self.tray_icon = None  # Иконка в трее
         
         # Переменные
         self.download_path = tk.StringVar(value=self.config.get('last_download_path'))
@@ -168,6 +174,10 @@ class VideoDownloaderApp:
         self.setup_ui()
         self.setup_dragdrop()
         self.setup_hotkeys()
+        self.setup_tray()
+        
+        # Запускаем проверку планировщика
+        self.root.after(60000, self.check_scheduled_tasks)
         
         # Автообновление ОТКЛЮЧЕНО для совместимости с PyInstaller
         # Используйте кнопку "Обновить yt-dlp" для обновления
@@ -197,6 +207,16 @@ class VideoDownloaderApp:
         queue_tab = ttk.Frame(notebook)
         notebook.add(queue_tab, text="🔄 Очередь")
         self.setup_queue_tab(queue_tab)
+        
+        # Вкладка: Планировщик
+        scheduler_tab = ttk.Frame(notebook)
+        notebook.add(scheduler_tab, text="⏰ Планировщик")
+        self.setup_scheduler_tab(scheduler_tab)
+        
+        # Вкладка: Конвертер
+        converter_tab = ttk.Frame(notebook)
+        notebook.add(converter_tab, text="🎬 Конвертер")
+        self.setup_converter_tab(converter_tab)
     
     def setup_download_tab(self, parent):
         """Вкладка загрузки"""
@@ -432,6 +452,85 @@ class VideoDownloaderApp:
         self.queue_listbox.pack(fill=tk.BOTH, expand=True, pady=10)
         
         ttk.Label(frame, text=f"Элементов в очереди: 0", font=("Arial", 10)).pack()
+    
+    def setup_scheduler_tab(self, parent):
+        """Вкладка планировщика"""
+        frame = ttk.Frame(parent, padding="10")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(frame, text="Планировщик загрузок", font=("Arial", 14, "bold")).pack(pady=10)
+        
+        # Форма добавления задачи
+        form_frame = ttk.LabelFrame(frame, text="Новая задача", padding="10")
+        form_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(form_frame, text="URL:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.sched_url = ttk.Entry(form_frame, width=50)
+        self.sched_url.grid(row=0, column=1, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        
+        ttk.Label(form_frame, text="Время (ЧЧ:ММ):").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.sched_time = ttk.Entry(form_frame, width=10)
+        self.sched_time.insert(0, "02:00")
+        self.sched_time.grid(row=1, column=1, sticky=tk.W, pady=5)
+        
+        ttk.Label(form_frame, text="Повтор:").grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.sched_repeat = ttk.Combobox(form_frame, values=["Один раз", "Каждый день", "Каждую неделю"], width=15)
+        self.sched_repeat.set("Один раз")
+        self.sched_repeat.grid(row=2, column=1, sticky=tk.W, pady=5)
+        
+        ttk.Button(form_frame, text="Добавить задачу", command=self.add_scheduled_task).grid(row=3, column=1, pady=10)
+        
+        # Список задач
+        ttk.Label(frame, text="Запланированные задачи:").pack(anchor=tk.W, pady=5)
+        self.scheduled_listbox = tk.Listbox(frame, height=10)
+        self.scheduled_listbox.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(pady=5)
+        ttk.Button(btn_frame, text="Удалить выбранную", command=self.remove_scheduled_task).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Очистить все", command=self.clear_scheduled_tasks).pack(side=tk.LEFT, padx=5)
+    
+    def setup_converter_tab(self, parent):
+        """Вкладка конвертера"""
+        frame = ttk.Frame(parent, padding="10")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(frame, text="Конвертер форматов", font=("Arial", 14, "bold")).pack(pady=10)
+        
+        # Выбор файла
+        file_frame = ttk.Frame(frame)
+        file_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(file_frame, text="Исходный файл:").pack(side=tk.LEFT, padx=5)
+        self.convert_input = ttk.Entry(file_frame, width=50)
+        self.convert_input.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(file_frame, text="Обзор...", command=self.browse_convert_input).pack(side=tk.LEFT, padx=5)
+        
+        # Формат конвертации
+        format_frame = ttk.LabelFrame(frame, text="Настройки конвертации", padding="10")
+        format_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(format_frame, text="Выходной формат:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.convert_format = ttk.Combobox(format_frame, values=["MP4", "MKV", "AVI", "WEBM", "MP3", "M4A"], width=10)
+        self.convert_format.set("MP4")
+        self.convert_format.grid(row=0, column=1, sticky=tk.W, pady=5)
+        
+        ttk.Label(format_frame, text="Качество:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.convert_quality = ttk.Combobox(format_frame, values=["Оригинальное", "1080p", "720p", "480p"], width=15)
+        self.convert_quality.set("Оригинальное")
+        self.convert_quality.grid(row=1, column=1, sticky=tk.W, pady=5)
+        
+        # Кнопка конвертации
+        ttk.Button(frame, text="Конвертировать", command=self.start_conversion, width=20).pack(pady=20)
+        
+        # Прогресс конвертации
+        self.convert_progress = ttk.Progressbar(frame, mode='indeterminate')
+        self.convert_progress.pack(fill=tk.X, pady=5)
+        
+        # Лог конвертации
+        ttk.Label(frame, text="Лог конвертации:").pack(anchor=tk.W, pady=5)
+        self.convert_log = scrolledtext.ScrolledText(frame, height=10, wrap=tk.WORD, state='disabled')
+        self.convert_log.pack(fill=tk.BOTH, expand=True, pady=5)
     
     def setup_dragdrop(self):
         """Настройка Drag & Drop"""
@@ -977,6 +1076,214 @@ class VideoDownloaderApp:
             
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось получить статистику:\n{str(e)}")
+    
+    # ============= СИСТЕМНЫЙ ТРЕЙ =============
+    
+    def setup_tray(self):
+        """Настройка иконки в системном трее"""
+        try:
+            # Создаём простую иконку
+            def create_icon():
+                image = Image.new('RGB', (64, 64), color=(73, 109, 137))
+                dc = ImageDraw.Draw(image)
+                dc.rectangle([16, 16, 48, 48], fill=(255, 255, 255))
+                return image
+            
+            # Меню трея
+            menu = Menu(
+                MenuItem('Показать', self.show_window, default=True),
+                MenuItem('Новая загрузка', self.new_download_from_tray),
+                Menu.SEPARATOR,
+                MenuItem('Выход', self.quit_app)
+            )
+            
+            # Создаём иконку
+            self.tray_icon = Icon("VideoDownloader", create_icon(), "Video Downloader", menu)
+            
+            # Запускаем в отдельном потоке
+            threading.Thread(target=self.tray_icon.run, daemon=True).start()
+            
+            # Обработка закрытия окна - минимизация в трей
+            self.root.protocol('WM_DELETE_WINDOW', self.hide_to_tray)
+            
+            self.log("✓ Системный трей активирован")
+        except Exception as e:
+            self.log(f"⚠ Системный трей недоступен: {str(e)}")
+    
+    def hide_to_tray(self):
+        """Свернуть в трей"""
+        self.root.withdraw()
+        self.log("Приложение свёрнуто в трей")
+    
+    def show_window(self, icon=None, item=None):
+        """Показать окно из трея"""
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+    
+    def new_download_from_tray(self, icon=None, item=None):
+        """Новая загрузка из трея"""
+        self.show_window()
+        self.url_entry.focus()
+    
+    def quit_app(self, icon=None, item=None):
+        """Выход из приложения"""
+        if self.tray_icon:
+            self.tray_icon.stop()
+        self.root.quit()
+    
+    # ============= ПЛАНИРОВЩИК =============
+    
+    def add_scheduled_task(self):
+        """Добавить запланированную задачу"""
+        url = self.sched_url.get().strip()
+        time_str = self.sched_time.get().strip()
+        repeat = self.sched_repeat.get()
+        
+        if not url or not time_str:
+            messagebox.showwarning("Предупреждение", "Заполните все поля!")
+            return
+        
+        task = {
+            'url': url,
+            'time': time_str,
+            'repeat': repeat,
+            'quality': self.quality.get()
+        }
+        
+        self.scheduled_tasks.append(task)
+        self.scheduled_listbox.insert(tk.END, f"{time_str} | {repeat} | {url}")
+        
+        # Настраиваем schedule
+        if repeat == "Каждый день":
+            schedule.every().day.at(time_str).do(self.execute_scheduled_download, task)
+        
+        self.log(f"✓ Задача добавлена: {url} в {time_str}")
+        self.sched_url.delete(0, tk.END)
+    
+    def execute_scheduled_download(self, task):
+        """Выполнить запланированную загрузку"""
+        self.url.set(task['url'])
+        self.quality.set(task['quality'])
+        self.start_download()
+        self.show_notification("Запланированная загрузка", f"Начата загрузка: {task['url'][:50]}...")
+    
+    def remove_scheduled_task(self):
+        """Удалить выбранную задачу"""
+        selection = self.scheduled_listbox.curselection()
+        if selection:
+            index = selection[0]
+            self.scheduled_listbox.delete(index)
+            if index < len(self.scheduled_tasks):
+                self.scheduled_tasks.pop(index)
+            self.log("✓ Задача удалена")
+    
+    def clear_scheduled_tasks(self):
+        """Очистить все задачи"""
+        self.scheduled_listbox.delete(0, tk.END)
+        self.scheduled_tasks.clear()
+        schedule.clear()
+        self.log("✓ Все задачи очищены")
+    
+    def check_scheduled_tasks(self):
+        """Проверка и выполнение запланированных задач"""
+        schedule.run_pending()
+        self.root.after(60000, self.check_scheduled_tasks)  # Проверка каждую минуту
+    
+    # ============= КОНВЕРТЕР =============
+    
+    def browse_convert_input(self):
+        """Выбор файла для конвертации"""
+        file = filedialog.askopenfilename(
+            filetypes=[
+                ("Video files", "*.mp4 *.mkv *.avi *.webm *.mov"),
+                ("Audio files", "*.mp3 *.m4a *.wav *.flac"),
+                ("All files", "*.*")
+            ]
+        )
+        if file:
+            self.convert_input.delete(0, tk.END)
+            self.convert_input.insert(0, file)
+    
+    def convert_video(self):
+        """Конвертация видео"""
+        input_file = self.convert_input.get().strip()
+        
+        if not input_file or not os.path.exists(input_file):
+            messagebox.showwarning("Предупреждение", "Выберите существующий файл!")
+            return
+        
+        try:
+            self.convert_progress.start(10)
+            
+            input_path = Path(input_file)
+            output_format = self.convert_format.get().lower()
+            output_file = input_path.parent / f"{input_path.stem}_converted.{output_format}"
+            
+            self.convert_log.config(state='normal')
+            self.convert_log.insert(tk.END, f"Начало конвертации: {input_path.name}\n")
+            self.convert_log.insert(tk.END, f"Формат: {output_format}\n")
+            self.convert_log.insert(tk.END, f"Выходной файл: {output_file.name}\n")
+            self.convert_log.insert(tk.END, "-" * 60 + "\n")
+            self.convert_log.config(state='disabled')
+            
+            # Команда FFmpeg
+            quality = self.convert_quality.get()
+            
+            if quality == "Оригинальное":
+                cmd = ['ffmpeg', '-i', str(input_file), '-c', 'copy', str(output_file)]
+            else:
+                height = quality.replace('p', '')
+                cmd = ['ffmpeg', '-i', str(input_file), '-vf', f'scale=-2:{height}', str(output_file)]
+            
+            # Запускаем FFmpeg
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            
+            self.convert_log.config(state='normal')
+            if result.returncode == 0:
+                self.convert_log.insert(tk.END, "✓ Конвертация завершена успешно!\n")
+                self.convert_log.insert(tk.END, f"Файл сохранён: {output_file}\n")
+                messagebox.showinfo("Успех", f"Файл сконвертирован!\n{output_file}")
+                self.show_notification("Конвертация завершена", f"Файл {output_file.name} готов!")
+            else:
+                self.convert_log.insert(tk.END, f"✗ Ошибка: {result.stderr}\n")
+                messagebox.showerror("Ошибка", "Не удалось конвертировать файл!")
+            
+            self.convert_log.config(state='disabled')
+            
+        except subprocess.TimeoutExpired:
+            self.convert_log.config(state='normal')
+            self.convert_log.insert(tk.END, "✗ Превышено время ожидания (5 минут)\n")
+            self.convert_log.config(state='disabled')
+            messagebox.showerror("Ошибка", "Конвертация занимает слишком много времени!")
+        except Exception as e:
+            self.convert_log.config(state='normal')
+            self.convert_log.insert(tk.END, f"✗ Ошибка: {str(e)}\n")
+            self.convert_log.config(state='disabled')
+            messagebox.showerror("Ошибка", f"Не удалось конвертировать:\n{str(e)}")
+        finally:
+            self.convert_progress.stop()
+    
+    def start_conversion(self):
+        """Запуск конвертации в отдельном потоке"""
+        thread = threading.Thread(target=self.convert_video, daemon=True)
+        thread.start()
+    
+    def setup_dragdrop(self):
+        """Настройка Drag & Drop"""
+        try:
+            self.url_entry.drop_target_register(DND_FILES)
+            self.url_entry.dnd_bind('<<Drop>>', self.on_drop)
+            self.log("✓ Drag & Drop активирован")
+        except Exception as e:
+            self.log(f"⚠ Drag & Drop недоступен: {str(e)}")
+    
+    def on_drop(self, event):
+        """Обработка Drag & Drop"""
+        data = event.data
+        if data.startswith('http'):
+            self.url.set(data)
+            self.log("✓ URL добавлен через Drag & Drop")
 
 
 def main():
