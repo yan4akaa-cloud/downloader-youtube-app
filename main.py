@@ -568,17 +568,19 @@ class VideoDownloaderApp:
         self.root.bind('<Escape>', lambda e: self.url.set(""))
         
         self.log("✓ Горячие клавиши активированы")
-        self.log("  Ctrl+V: Вставить URL, Ctrl+D: Скачать, Ctrl+I: Инфо")
-        self.log("  Ctrl+Q: В очередь, Ctrl+U: Обновить yt-dlp, F5: Обновить")
+        self.log("  Ctrl+V: Вставить URL из буфера")
+        self.log("  Ctrl+D: Скачать видео, Ctrl+I: Получить информацию")
+        self.log("  Ctrl+Q: Добавить в очередь, Ctrl+U: Обновить yt-dlp")
+        self.log("  F5: Обновить историю, Esc: Очистить URL")
     
     def paste_and_download(self):
-        """Вставить URL из буфера и начать загрузку"""
+        """Вставить URL из буфера обмена"""
         try:
             clipboard = self.root.clipboard_get()
             if clipboard.startswith('http'):
                 self.url.set(clipboard)
-                self.log("✓ URL вставлен из буфера обмена")
-                self.start_download()
+                self.log("✓ URL вставлен из буфера обмена (Ctrl+V)")
+                self.log("  Используйте Ctrl+D для загрузки")
         except:
             pass
     
